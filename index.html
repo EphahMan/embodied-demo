@@ -1,0 +1,2062 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>自然具身交互 Web Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html,
+      body {
+        height: 100%;
+        background: #000;
+        overscroll-behavior: none;
+      }
+      body {
+        touch-action: none;
+      }
+      #cameraVideo {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        background: #000;
+        transform: translateZ(0);
+      }
+      #threeCanvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      .shake {
+        animation: shake 280ms linear;
+      }
+      @keyframes shake {
+        0% {
+          transform: translate(0, 0);
+        }
+        20% {
+          transform: translate(-4px, 2px);
+        }
+        40% {
+          transform: translate(4px, -2px);
+        }
+        60% {
+          transform: translate(-3px, -2px);
+        }
+        80% {
+          transform: translate(3px, 2px);
+        }
+        100% {
+          transform: translate(0, 0);
+        }
+      }
+      .fade-in {
+        animation: fadeIn 220ms ease-out;
+      }
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  </head>
+  <body class="select-none">
+    <video id="cameraVideo" autoplay playsinline muted></video>
+    <canvas id="threeCanvas"></canvas>
+    <div id="appRoot" class="fixed inset-0 text-white">
+      <div id="toast" class="pointer-events-none fixed left-1/2 top-4 z-50 hidden -translate-x-1/2 rounded-full bg-black/60 px-4 py-2 text-sm backdrop-blur">
+        <span id="toastText"></span>
+      </div>
+      <div id="homeView" class="flex h-full w-full flex-col items-center justify-center gap-4 px-6">
+        <div class="mb-2 text-center">
+          <div class="text-2xl font-extrabold tracking-tight">自然具身交互</div>
+          <div class="mt-2 text-sm text-white/80">请选择一个关卡开始</div>
+        </div>
+        <div class="grid w-full max-w-md grid-cols-1 gap-4">
+          <button data-nav="level1" class="h-16 w-full rounded-2xl bg-emerald-500/90 text-lg font-bold shadow-lg active:scale-[0.98]">B1 捏取（收集）</button>
+          <button data-nav="level2" class="h-16 w-full rounded-2xl bg-sky-500/90 text-lg font-bold shadow-lg active:scale-[0.98]">B2 吹气（风）</button>
+          <button data-nav="level3" class="h-16 w-full rounded-2xl bg-amber-500/90 text-lg font-bold shadow-lg active:scale-[0.98]">C3 抚摸（唤醒）</button>
+          <button data-nav="level4" class="h-16 w-full rounded-2xl bg-stone-500/90 text-lg font-bold shadow-lg active:scale-[0.98]">A3 翻开（发现）</button>
+          <button data-nav="level5" class="h-16 w-full rounded-2xl bg-fuchsia-500/90 text-lg font-bold shadow-lg active:scale-[0.98]">A5 倾听（熄屏）</button>
+        </div>
+        <div class="mt-4 max-w-md rounded-2xl bg-black/40 p-4 text-xs leading-relaxed text-white/85 backdrop-blur">
+          <div class="font-semibold">iOS Safari 注意</div>
+          <div class="mt-1">进入关卡后需要再次点击“点击开始”以获取权限并初始化音频。</div>
+          <div class="mt-1">请在 HTTPS 或 localhost 下测试。</div>
+        </div>
+      </div>
+      <div id="levelView" class="hidden h-full w-full">
+        <div class="absolute left-0 top-0 z-40 flex w-full items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))]">
+          <button id="backHome" class="h-12 rounded-2xl bg-black/50 px-4 text-base font-bold backdrop-blur active:scale-[0.98]">返回主页</button>
+          <div id="levelTitle" class="rounded-2xl bg-black/40 px-4 py-2 text-sm font-semibold backdrop-blur"></div>
+        </div>
+        <div id="levelHud" class="absolute inset-0 z-30">
+          <div id="backpackIcon" class="pointer-events-none absolute right-4 top-[max(72px,calc(env(safe-area-inset-top)+60px))] hidden h-14 w-14 items-center justify-center rounded-2xl bg-black/40 text-2xl backdrop-blur">🎒</div>
+          <div id="leafSprite" class="pointer-events-none absolute hidden h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-400/80 text-3xl shadow-lg backdrop-blur">🍃</div>
+          <div id="touchAreaHint" class="pointer-events-none absolute hidden rounded-2xl bg-black/40 px-4 py-2 text-sm text-white/90 backdrop-blur"></div>
+          <div id="transformHud" class="pointer-events-none absolute left-4 bottom-16 hidden rounded-2xl bg-black/55 px-4 py-2 text-xs text-white/90 backdrop-blur"></div>
+          <div id="blackoutOverlay" class="pointer-events-none absolute inset-0 hidden bg-black"></div>
+        </div>
+        <div id="startGate" class="absolute inset-0 z-50 hidden items-center justify-center bg-black/60 px-6 backdrop-blur-sm">
+          <div class="w-full max-w-md rounded-3xl bg-black/70 p-6 text-center shadow-xl">
+            <div id="gateTitle" class="text-xl font-extrabold"></div>
+            <div id="gateDesc" class="mt-3 text-sm leading-relaxed text-white/85"></div>
+            <button id="gateButton" class="mt-6 h-14 w-full rounded-2xl bg-white text-lg font-extrabold text-black active:scale-[0.98]">点击开始</button>
+            <div class="mt-3 text-xs text-white/70">需要用户点击以启用摄像头、麦克风（如需要）与音频。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module">
+      import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+ 
+      const AudioPaths = {
+        ding: 'assets/audio/ding.mp3',
+        wind: 'assets/audio/wind.mp3',
+        heartbeat: 'assets/audio/heartbeat.mp3',
+        rock: 'assets/audio/rock.mp3',
+        nature: 'assets/audio/nature.mp3'
+      };
+ 
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+ 
+      const rafThrottle = (fn, minMs) => {
+        let last = 0;
+        return (...args) => {
+          const now = performance.now();
+          if (now - last < minMs) return;
+          last = now;
+          fn(...args);
+        };
+      };
+ 
+      const toast = (() => {
+        const el = document.getElementById('toast');
+        const text = document.getElementById('toastText');
+        let t = null;
+        return (msg, ms = 1200) => {
+          text.textContent = msg;
+          el.classList.remove('hidden');
+          el.classList.add('fade-in');
+          clearTimeout(t);
+          t = setTimeout(() => {
+            el.classList.add('hidden');
+            el.classList.remove('fade-in');
+          }, ms);
+        };
+      })();
+ 
+      const Telemetry = (() => {
+        const key = 'embodied_demo_telemetry_v1';
+        const max = 120;
+        const read = () => {
+          try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        };
+        const write = (arr) => {
+          try {
+            localStorage.setItem(key, JSON.stringify(arr.slice(-max)));
+          } catch {}
+        };
+        const push = (evt) => {
+          const arr = read();
+          arr.push(evt);
+          write(arr);
+        };
+        const safeString = (v) => {
+          try {
+            if (v instanceof Error) return `${v.name}: ${v.message}`;
+            if (typeof v === 'string') return v.slice(0, 600);
+            return JSON.stringify(v).slice(0, 600);
+          } catch {
+            return String(v).slice(0, 600);
+          }
+        };
+        const report = (type, payload) => {
+          const evt = { ts: Date.now(), type, payload: safeString(payload), href: location.href };
+          push(evt);
+          if (type === 'error' || type === 'unhandledrejection') console.error(type, payload);
+          else console.log(type, payload);
+        };
+        window.addEventListener('error', (e) => {
+          report('error', { message: e.message, filename: e.filename, lineno: e.lineno, colno: e.colno });
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+          report('unhandledrejection', e.reason);
+        });
+        const get = () => read();
+        const clear = () => {
+          try {
+            localStorage.removeItem(key);
+          } catch {}
+        };
+        return { report, get, clear };
+      })();
+ 
+      const PerfHUD = (() => {
+        const el = document.createElement('div');
+        el.className =
+          'fixed bottom-3 left-3 z-[60] hidden max-w-[92vw] rounded-2xl bg-black/60 px-4 py-3 text-xs leading-relaxed text-white/90 backdrop-blur';
+        el.style.pointerEvents = 'auto';
+        document.body.appendChild(el);
+        let visible = false;
+        let rafId = null;
+        let lastT = 0;
+        let winT = 0;
+        let winFrames = 0;
+        let fps = 0;
+        let longTasks = 0;
+        let maxFrameMs = 0;
+        let watchdogBase = performance.now();
+        let watchdogTimer = null;
+        const fmt = (n) => (Number.isFinite(n) ? n.toFixed(1) : 'n/a');
+        const render = () => {
+          const mem = performance?.memory?.usedJSHeapSize ? `${Math.round(performance.memory.usedJSHeapSize / 1048576)}MB` : 'n/a';
+          el.textContent = `FPS: ${fps} | MaxFrame: ${fmt(maxFrameMs)}ms | LongTask: ${longTasks} | Heap: ${mem}`;
+        };
+        const loop = (t) => {
+          if (!visible) return;
+          if (lastT) maxFrameMs = Math.max(maxFrameMs, t - lastT);
+          lastT = t;
+          if (!winT) winT = t;
+          winFrames++;
+          if (t - winT >= 1000) {
+            fps = Math.round((winFrames * 1000) / (t - winT));
+            winT = t;
+            winFrames = 0;
+            render();
+          }
+          rafId = requestAnimationFrame(loop);
+        };
+        const toggle = () => {
+          visible = !visible;
+          el.classList.toggle('hidden', !visible);
+          if (visible) {
+            fps = 0;
+            longTasks = 0;
+            maxFrameMs = 0;
+            lastT = 0;
+            winT = 0;
+            winFrames = 0;
+            render();
+            rafId = requestAnimationFrame(loop);
+            watchdogBase = performance.now();
+            watchdogTimer = setInterval(() => {
+              const now = performance.now();
+              const drift = now - watchdogBase - 1000;
+              watchdogBase = now;
+              if (drift > 1500) Telemetry.report('watchdog_stall', { driftMs: Math.round(drift) });
+            }, 1000);
+          } else {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = null;
+            if (watchdogTimer) clearInterval(watchdogTimer);
+            watchdogTimer = null;
+          }
+        };
+        const onKey = (e) => {
+          if (e.key === 'p' || e.key === 'P') toggle();
+        };
+        window.addEventListener('keydown', onKey);
+        try {
+          const po = new PerformanceObserver((list) => {
+            for (const e of list.getEntries()) {
+              if (e.duration >= 50) longTasks++;
+            }
+          });
+          po.observe({ entryTypes: ['longtask'] });
+        } catch {}
+        return { toggle };
+      })();
+ 
+      class CameraManager {
+        constructor(videoEl) {
+          this.videoEl = videoEl;
+          this.stream = null;
+          this.ready = false;
+        }
+        async start() {
+          if (this.stream) return this.stream;
+          const constraints = {
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30, max: 30 }
+            },
+            audio: false
+          };
+          this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.videoEl.srcObject = this.stream;
+          await this.videoEl.play();
+          await new Promise((resolve) => {
+            if (this.videoEl.readyState >= 2) return resolve();
+            const onLoaded = () => {
+              this.videoEl.removeEventListener('loadeddata', onLoaded);
+              resolve();
+            };
+            this.videoEl.addEventListener('loadeddata', onLoaded);
+          });
+          this.ready = true;
+          return this.stream;
+        }
+        stop() {
+          if (!this.stream) return;
+          this.stream.getTracks().forEach((t) => t.stop());
+          this.stream = null;
+          this.ready = false;
+        }
+      }
+ 
+      class AudioManager {
+        constructor() {
+          this.ctx = null;
+          this.buffers = new Map();
+          this.loopSource = null;
+          this.loopGain = null;
+        }
+        async initFromGesture() {
+          if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (this.ctx.state !== 'running') await this.ctx.resume();
+        }
+        async load(url) {
+          if (this.buffers.has(url)) return this.buffers.get(url);
+          if (!this.ctx) throw new Error('AudioContext not ready');
+          const res = await fetch(url);
+          const arr = await res.arrayBuffer();
+          const buf = await this.ctx.decodeAudioData(arr);
+          this.buffers.set(url, buf);
+          return buf;
+        }
+        async playOneShot(url, { volume = 1 } = {}) {
+          await this.initFromGesture();
+          const buf = await this.load(url);
+          const src = this.ctx.createBufferSource();
+          const gain = this.ctx.createGain();
+          gain.gain.value = volume;
+          src.buffer = buf;
+          src.connect(gain);
+          gain.connect(this.ctx.destination);
+          src.start();
+          return src;
+        }
+        async startLoop(url, { volume = 0.7 } = {}) {
+          await this.initFromGesture();
+          await this.stopLoop();
+          const buf = await this.load(url);
+          const src = this.ctx.createBufferSource();
+          const gain = this.ctx.createGain();
+          gain.gain.value = volume;
+          src.buffer = buf;
+          src.loop = true;
+          src.connect(gain);
+          gain.connect(this.ctx.destination);
+          src.start();
+          this.loopSource = src;
+          this.loopGain = gain;
+        }
+        async stopLoop() {
+          if (this.loopSource) {
+            try {
+              this.loopSource.stop();
+            } catch {}
+          }
+          this.loopSource = null;
+          this.loopGain = null;
+        }
+      }
+ 
+      class MicAnalyser {
+        constructor(audioManager) {
+          this.audioManager = audioManager;
+          this.stream = null;
+          this.analyser = null;
+          this.data = null;
+        }
+        async start() {
+          if (this.analyser) return;
+          await this.audioManager.initFromGesture();
+          this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          const src = this.audioManager.ctx.createMediaStreamSource(this.stream);
+          this.analyser = this.audioManager.ctx.createAnalyser();
+          this.analyser.fftSize = 1024;
+          src.connect(this.analyser);
+          this.data = new Uint8Array(this.analyser.fftSize);
+        }
+        stop() {
+          if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+          this.stream = null;
+          this.analyser = null;
+          this.data = null;
+        }
+        getRms() {
+          if (!this.analyser || !this.data) return 0;
+          this.analyser.getByteTimeDomainData(this.data);
+          let sum = 0;
+          for (let i = 0; i < this.data.length; i++) {
+            const v = (this.data[i] - 128) / 128;
+            sum += v * v;
+          }
+          return Math.sqrt(sum / this.data.length);
+        }
+      }
+ 
+      class HandsTracker {
+        constructor(videoEl) {
+          this.videoEl = videoEl;
+          this.hands = null;
+          this.running = false;
+          this.latest = null;
+          this._inflight = false;
+          this._rafId = null;
+          this._lastSent = 0;
+          this._minIntervalMs = 1000 / 15;
+          this._sendErrors = 0;
+          this._lastErrWindow = 0;
+        }
+        async start({ targetFps = 15 } = {}) {
+          if (this.running) return;
+          this._minIntervalMs = 1000 / clamp(targetFps, 5, 30);
+          this._lastSent = 0;
+          this._sendErrors = 0;
+          this._lastErrWindow = 0;
+          this.hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+          });
+          this.hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+          });
+          this.hands.onResults((res) => {
+            this.latest = res;
+            this._inflight = false;
+          });
+          this.running = true;
+          this._loop();
+        }
+        stop() {
+          this.running = false;
+          this.latest = null;
+          this._inflight = false;
+          if (this._rafId) cancelAnimationFrame(this._rafId);
+          this._rafId = null;
+          if (this.hands && this.hands.close) {
+            try {
+              this.hands.close();
+            } catch {}
+          }
+          this.hands = null;
+        }
+        _loop() {
+          const step = (t) => {
+            if (!this.running) return;
+            if (!this.hands) return;
+            if (!this.videoEl.videoWidth || !this.videoEl.videoHeight) {
+              this._rafId = requestAnimationFrame(step);
+              return;
+            }
+            const canSend = !this._inflight && t - this._lastSent >= this._minIntervalMs;
+            if (canSend) {
+              this._inflight = true;
+              this._lastSent = t;
+              this.hands
+                .send({ image: this.videoEl })
+                .catch((e) => {
+                  this._inflight = false;
+                  Telemetry.report('hands_send_error', e);
+                  const now = performance.now();
+                  if (now - this._lastErrWindow > 4000) {
+                    this._lastErrWindow = now;
+                    this._sendErrors = 0;
+                  }
+                  this._sendErrors++;
+                  if (this._sendErrors >= 8) {
+                    Telemetry.report('hands_stopped_due_errors', { windowMs: 4000, count: this._sendErrors });
+                    this.stop();
+                  }
+                });
+            }
+            this._rafId = requestAnimationFrame(step);
+          };
+          this._rafId = requestAnimationFrame(step);
+        }
+        getPinchPointViewport({ pinchThreshold = 0.045 } = {}) {
+          const res = this.latest;
+          if (!res || !res.multiHandLandmarks || !res.multiHandLandmarks[0]) return null;
+          const lm = res.multiHandLandmarks[0];
+          const thumb = lm[4];
+          const index = lm[8];
+          const dx = thumb.x - index.x;
+          const dy = thumb.y - index.y;
+          const dist = Math.hypot(dx, dy);
+          const pinched = dist <= pinchThreshold;
+          if (!pinched) return null;
+          const x = (thumb.x + index.x) * 0.5;
+          const y = (thumb.y + index.y) * 0.5;
+          const rect = this.videoEl.getBoundingClientRect();
+          return { x: rect.left + x * rect.width, y: rect.top + y * rect.height };
+        }
+      }
+ 
+      class ThreeLayer {
+        constructor(canvas) {
+          this.canvas = canvas;
+          this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
+          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          this.renderer.setClearColor(0x000000, 0);
+          this.renderer.shadowMap.enabled = true;
+          this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+          this.scene = null;
+          this.camera = null;
+          this._running = false;
+          this._tick = null;
+          this._onResize = () => this.resize();
+          window.addEventListener('resize', this._onResize);
+          this.resize();
+        }
+        resize() {
+          const w = window.innerWidth;
+          const h = window.innerHeight;
+          this.renderer.setSize(w, h, false);
+          if (this.camera && this.camera.isOrthographicCamera) {
+            this.camera.left = -w / 2;
+            this.camera.right = w / 2;
+            this.camera.top = h / 2;
+            this.camera.bottom = -h / 2;
+            this.camera.updateProjectionMatrix();
+          }
+          if (this.camera && this.camera.isPerspectiveCamera) {
+            this.camera.aspect = w / h;
+            this.camera.updateProjectionMatrix();
+          }
+        }
+        setScene(scene, camera, tickFn) {
+          this.scene = scene;
+          this.camera = camera;
+          this._tick = tickFn || null;
+        }
+        start() {
+          if (this._running) return;
+          this._running = true;
+          const loop = () => {
+            if (!this._running) return;
+            if (this._tick) this._tick(performance.now());
+            if (this.scene && this.camera) this.renderer.render(this.scene, this.camera);
+            requestAnimationFrame(loop);
+          };
+          requestAnimationFrame(loop);
+        }
+        stop() {
+          this._running = false;
+          this.scene = null;
+          this.camera = null;
+          this._tick = null;
+          this.renderer.clear();
+        }
+      }
+ 
+      class ThreeInteractor {
+        constructor(three, ui) {
+          this.three = three;
+          this.ui = ui;
+          this.enabled = true;
+          this.isTransforming = false;
+          this.activeRoot = null;
+          this.mode = null;
+          this._raycaster = new THREE.Raycaster();
+          this._ndc = new THREE.Vector2();
+          this._startWorld = new THREE.Vector3();
+          this._dragOffset = new THREE.Vector3();
+          this._startRot = new THREE.Euler();
+          this._startPos = new THREE.Vector3();
+          this._targets = [];
+          this._pointerMap = new Map();
+          this._twoStart = null;
+          this._wheelStopTimer = null;
+          this._bind();
+        }
+        setTargets(roots) {
+          this._targets = Array.isArray(roots) ? roots.filter(Boolean) : [];
+        }
+        pickRootAt(clientX, clientY) {
+          if (!this.enabled) return null;
+          if (!this._targets.length) return null;
+          return this._pickRoot(clientX, clientY);
+        }
+        clearTargets() {
+          this._targets = [];
+          this._endTransform();
+        }
+        _bind() {
+          document.addEventListener('pointerdown', (e) => this._onPointerDown(e), true);
+          document.addEventListener('pointermove', (e) => this._onPointerMove(e), true);
+          document.addEventListener('pointerup', (e) => this._onPointerUp(e), true);
+          document.addEventListener('pointercancel', (e) => this._onPointerUp(e), true);
+          document.addEventListener(
+            'wheel',
+            (e) => {
+              this._onWheel(e);
+            },
+            { capture: true, passive: false }
+          );
+          document.addEventListener(
+            'contextmenu',
+            (e) => {
+              if (!this.enabled) return;
+              if (!this.three.scene || !this.three.camera) return;
+              if (!this._targets.length) return;
+              if (!this._gateClosed()) return;
+              const root = this.activeRoot || this._pickRoot(e.clientX, e.clientY);
+              if (!root) return;
+              e.preventDefault();
+            },
+            true
+          );
+        }
+        _gateClosed() {
+          return this.ui.startGate.classList.contains('hidden');
+        }
+        _isUiTarget(e) {
+          const t = e.target;
+          if (!(t instanceof Element)) return false;
+          if (t.closest('#startGate')) return true;
+          if (t.closest('#homeView')) return true;
+          if (t.closest('button')) return true;
+          return false;
+        }
+        _setHud(text) {
+          if (!this.ui.transformHud) return;
+          if (!text) {
+            this.ui.transformHud.classList.add('hidden');
+            this.ui.transformHud.textContent = '';
+            return;
+          }
+          this.ui.transformHud.textContent = text;
+          this.ui.transformHud.classList.remove('hidden');
+        }
+        _ndcFromClient(x, y) {
+          const w = window.innerWidth || 1;
+          const h = window.innerHeight || 1;
+          this._ndc.set((x / w) * 2 - 1, -(y / h) * 2 + 1);
+          return this._ndc;
+        }
+        _clientToWorld(x, y) {
+          const cam = this.three.camera;
+          const ndc = this._ndcFromClient(x, y);
+          const v = new THREE.Vector3(ndc.x, ndc.y, 0);
+          v.unproject(cam);
+          return v;
+        }
+        _pickRoot(x, y) {
+          const scene = this.three.scene;
+          const cam = this.three.camera;
+          if (!scene || !cam) return null;
+          const ndc = this._ndcFromClient(x, y);
+          this._raycaster.setFromCamera(ndc, cam);
+          const meshes = [];
+          for (const r of this._targets) {
+            r.traverse((n) => {
+              if (n.isMesh && n.visible) meshes.push(n);
+            });
+          }
+          const hits = this._raycaster.intersectObjects(meshes, false);
+          if (!hits.length) return null;
+          let o = hits[0].object;
+          while (o) {
+            if (o.userData && o.userData.__interactiveRoot) return o;
+            o = o.parent;
+          }
+          return null;
+        }
+        _highlight(root, on) {
+          if (!root) return;
+          if (on) {
+            if (!root.userData.__origScale) root.userData.__origScale = root.scale.clone();
+            root.scale.set(root.userData.__origScale.x * 1.06, root.userData.__origScale.y * 1.06, root.userData.__origScale.z * 1.06);
+            root.traverse((n) => {
+              if (!n.isMesh || !n.material) return;
+              const m = n.material;
+              if (!n.userData.__origEmissive && m.emissive) n.userData.__origEmissive = m.emissive.clone();
+              if (m.emissive) m.emissive.setRGB(0.12, 0.12, 0.12);
+              if (!n.userData.__origOpacity && typeof m.opacity === 'number') n.userData.__origOpacity = m.opacity;
+              if (m.transparent) m.opacity = Math.max(0.85, m.opacity);
+            });
+          } else {
+            if (root.userData.__origScale) root.scale.copy(root.userData.__origScale);
+            root.traverse((n) => {
+              if (!n.isMesh || !n.material) return;
+              const m = n.material;
+              if (n.userData.__origEmissive && m.emissive) m.emissive.copy(n.userData.__origEmissive);
+              if (n.userData.__origOpacity && typeof m.opacity === 'number') m.opacity = n.userData.__origOpacity;
+            });
+          }
+        }
+        _beginDrag(root, clientX, clientY) {
+          this.isTransforming = true;
+          this.mode = 'drag';
+          this.activeRoot = root;
+          this._startPos.copy(root.position);
+          const w = this._clientToWorld(clientX, clientY);
+          this._startWorld.copy(w);
+          this._dragOffset.copy(root.position).sub(w);
+          this._highlight(root, true);
+        }
+        _beginRotate(root, clientX, clientY) {
+          this.isTransforming = true;
+          this.mode = 'rotate';
+          this.activeRoot = root;
+          this._startRot.copy(root.rotation);
+          this._pointerMap.set('mouseRotate', { x: clientX, y: clientY });
+          this._highlight(root, true);
+        }
+        _beginTwoFinger(root) {
+          const pts = [...this._pointerMap.values()].map((p) => ({ x: p.x, y: p.y }));
+          if (pts.length !== 2) return;
+          const dx = pts[1].x - pts[0].x;
+          const dy = pts[1].y - pts[0].y;
+          this._twoStart = {
+            angle: Math.atan2(dy, dx),
+            dist: Math.hypot(dx, dy),
+            mid: { x: (pts[0].x + pts[1].x) * 0.5, y: (pts[0].y + pts[1].y) * 0.5 },
+            rot: this.activeRoot ? this.activeRoot.rotation.clone() : root.rotation.clone()
+          };
+        }
+        _endTransform() {
+          if (!this.isTransforming) return;
+          const root = this.activeRoot;
+          this.isTransforming = false;
+          this.mode = null;
+          this.activeRoot = null;
+          this._pointerMap.clear();
+          this._twoStart = null;
+          this._setHud('');
+          this._highlight(root, false);
+        }
+        _onPointerDown(e) {
+          if (!this.enabled) return;
+          if (!this._gateClosed()) return;
+          if (!this.three.scene || !this.three.camera) return;
+          if (!this._targets.length) return;
+          if (this._isUiTarget(e)) return;
+          const root = this._pickRoot(e.clientX, e.clientY);
+          if (!root) return;
+          try {
+            e.target.setPointerCapture?.(e.pointerId);
+          } catch {}
+          if (e.pointerType === 'touch') {
+            this._pointerMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (!this.isTransforming) this._beginDrag(root, e.clientX, e.clientY);
+            if (this._pointerMap.size === 2) {
+              this.mode = 'rotate';
+              this._startRot.copy(root.rotation);
+              this.activeRoot = root;
+              this._beginTwoFinger(root);
+            }
+            e.preventDefault();
+            return;
+          }
+          if (e.button === 2) this._beginRotate(root, e.clientX, e.clientY);
+          else this._beginDrag(root, e.clientX, e.clientY);
+          e.preventDefault();
+        }
+        _onPointerMove(e) {
+          if (!this.enabled) return;
+          if (!this.isTransforming) return;
+          const root = this.activeRoot;
+          if (!root) return;
+          if (e.pointerType === 'touch') {
+            if (this._pointerMap.has(e.pointerId)) this._pointerMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (this.mode === 'drag' && this._pointerMap.size === 1) {
+              const w = this._clientToWorld(e.clientX, e.clientY);
+              root.position.copy(w.add(this._dragOffset));
+            } else if (this.mode === 'rotate' && this._pointerMap.size >= 2 && this._twoStart) {
+              const pts = [...this._pointerMap.values()];
+              const dx = pts[1].x - pts[0].x;
+              const dy = pts[1].y - pts[0].y;
+              const angle = Math.atan2(dy, dx);
+              const dist = Math.max(1, Math.hypot(dx, dy));
+              const mid = { x: (pts[0].x + pts[1].x) * 0.5, y: (pts[0].y + pts[1].y) * 0.5 };
+              const da = angle - this._twoStart.angle;
+              const dd = (dist - this._twoStart.dist) / 200;
+              const mx = (mid.x - this._twoStart.mid.x) / 120;
+              const my = (mid.y - this._twoStart.mid.y) / 120;
+              root.rotation.z = this._twoStart.rot.z + da;
+              root.rotation.y = this._twoStart.rot.y + mx;
+              root.rotation.x = clamp(this._twoStart.rot.x + my, -Math.PI * 0.48, Math.PI * 0.48);
+              root.rotation.y += dd;
+            }
+            this._setHud(this._hudText(root));
+            e.preventDefault();
+            return;
+          }
+          if (this.mode === 'drag') {
+            const w = this._clientToWorld(e.clientX, e.clientY);
+            root.position.copy(w.add(this._dragOffset));
+          } else if (this.mode === 'rotate') {
+            const start = this._pointerMap.get('mouseRotate') || { x: e.clientX, y: e.clientY };
+            const dx = e.clientX - start.x;
+            const dy = e.clientY - start.y;
+            root.rotation.y = this._startRot.y + dx * 0.01;
+            root.rotation.x = clamp(this._startRot.x + dy * 0.01, -Math.PI * 0.48, Math.PI * 0.48);
+          }
+          this._setHud(this._hudText(root));
+          e.preventDefault();
+        }
+        _onPointerUp(e) {
+          if (!this.enabled) return;
+          if (e.pointerType === 'touch') {
+            this._pointerMap.delete(e.pointerId);
+            if (this._pointerMap.size === 0) this._endTransform();
+            else if (this._pointerMap.size === 1 && this.isTransforming && this.activeRoot) {
+              const p = [...this._pointerMap.values()][0];
+              this._beginDrag(this.activeRoot, p.x, p.y);
+            }
+            return;
+          }
+          this._endTransform();
+        }
+        _onWheel(e) {
+          if (!this.enabled) return;
+          if (!this._gateClosed()) return;
+          if (!this.three.scene || !this.three.camera) return;
+          if (!this._targets.length) return;
+          if (this._isUiTarget(e)) return;
+          const root = this.activeRoot || this._pickRoot(e.clientX, e.clientY);
+          if (!root) return;
+          root.rotation.y += -e.deltaY * 0.002;
+          this._highlight(root, true);
+          this._setHud(this._hudText(root));
+          clearTimeout(this._wheelStopTimer);
+          this._wheelStopTimer = setTimeout(() => {
+            this._highlight(root, false);
+            this._setHud('');
+          }, 240);
+          e.preventDefault();
+        }
+        _hudText(root) {
+          const p = root.position;
+          const r = root.rotation;
+          const deg = (v) => Math.round((v * 180) / Math.PI);
+          return `x:${Math.round(p.x)} y:${Math.round(p.y)}  rotX:${deg(r.x)} rotY:${deg(r.y)} rotZ:${deg(r.z)}`;
+        }
+      }
+ 
+      const makeOrtho = () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const cam = new THREE.OrthographicCamera(-w / 2, w / 2, h / 2, -h / 2, 0.1, 5000);
+        cam.position.set(0, 0, 1000);
+        cam.lookAt(0, 0, 0);
+        return cam;
+      };
+ 
+      const makeLight = (scene) => {
+        const a = new THREE.AmbientLight(0xffffff, 0.65);
+        const d = new THREE.DirectionalLight(0xffffff, 0.95);
+        d.position.set(520, 980, 720);
+        d.castShadow = true;
+        d.shadow.mapSize.set(512, 512);
+        d.shadow.camera.near = 200;
+        d.shadow.camera.far = 2600;
+        d.shadow.camera.left = -700;
+        d.shadow.camera.right = 700;
+        d.shadow.camera.top = 900;
+        d.shadow.camera.bottom = -900;
+        scene.add(a, d);
+      };
+ 
+      const TextureKit = (() => {
+        const makeCanvasTexture = (size, draw) => {
+          const c = document.createElement('canvas');
+          c.width = size;
+          c.height = size;
+          const ctx = c.getContext('2d');
+          draw(ctx, size);
+          const tex = new THREE.CanvasTexture(c);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.RepeatWrapping;
+          tex.needsUpdate = true;
+          return tex;
+        };
+ 
+        const leafMap = makeCanvasTexture(256, (ctx, s) => {
+          const g = ctx.createLinearGradient(0, 0, 0, s);
+          g.addColorStop(0, '#10b981');
+          g.addColorStop(1, '#047857');
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, s, s);
+          ctx.globalAlpha = 0.35;
+          ctx.strokeStyle = '#d1fae5';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(s * 0.5, s * 0.08);
+          ctx.lineTo(s * 0.5, s * 0.92);
+          ctx.stroke();
+          ctx.globalAlpha = 0.25;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 9; i++) {
+            const t = i / 8;
+            const y = s * (0.18 + t * 0.62);
+            const x1 = s * (0.5 - (0.05 + t * 0.35));
+            const x2 = s * (0.5 + (0.05 + t * 0.35));
+            ctx.beginPath();
+            ctx.moveTo(s * 0.5, y);
+            ctx.quadraticCurveTo(s * 0.48, y - s * 0.03, x1, y - s * 0.05);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(s * 0.5, y);
+            ctx.quadraticCurveTo(s * 0.52, y - s * 0.03, x2, y - s * 0.05);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        const leafBump = makeCanvasTexture(256, (ctx, s) => {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, s, s);
+          ctx.globalAlpha = 0.95;
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(s * 0.5, s * 0.08);
+          ctx.lineTo(s * 0.5, s * 0.92);
+          ctx.stroke();
+          ctx.globalAlpha = 0.55;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 10; i++) {
+            const t = i / 9;
+            const y = s * (0.16 + t * 0.66);
+            const x1 = s * (0.5 - (0.06 + t * 0.34));
+            const x2 = s * (0.5 + (0.06 + t * 0.34));
+            ctx.beginPath();
+            ctx.moveTo(s * 0.5, y);
+            ctx.quadraticCurveTo(s * 0.47, y - s * 0.03, x1, y - s * 0.06);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(s * 0.5, y);
+            ctx.quadraticCurveTo(s * 0.53, y - s * 0.03, x2, y - s * 0.06);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        const barkMap = makeCanvasTexture(256, (ctx, s) => {
+          ctx.fillStyle = '#6b3f22';
+          ctx.fillRect(0, 0, s, s);
+          for (let i = 0; i < 2400; i++) {
+            const x = Math.random() * s;
+            const y = Math.random() * s;
+            const w = 1 + Math.random() * 3;
+            const h = 1 + Math.random() * 6;
+            const a = 0.03 + Math.random() * 0.08;
+            ctx.fillStyle = `rgba(255,255,255,${a})`;
+            ctx.fillRect(x, y, w, h);
+          }
+          for (let i = 0; i < 70; i++) {
+            const x = Math.random() * s;
+            ctx.globalAlpha = 0.14;
+            ctx.strokeStyle = '#2b160b';
+            ctx.lineWidth = 1 + Math.random() * 2;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.bezierCurveTo(x + (Math.random() - 0.5) * 30, s * 0.3, x + (Math.random() - 0.5) * 30, s * 0.65, x + (Math.random() - 0.5) * 22, s);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        const barkBump = makeCanvasTexture(256, (ctx, s) => {
+          ctx.fillStyle = '#202020';
+          ctx.fillRect(0, 0, s, s);
+          for (let i = 0; i < 120; i++) {
+            const x = Math.random() * s;
+            ctx.globalAlpha = 0.32;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1 + Math.random() * 2;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.bezierCurveTo(x + (Math.random() - 0.5) * 30, s * 0.35, x + (Math.random() - 0.5) * 30, s * 0.7, x + (Math.random() - 0.5) * 22, s);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        const rockMap = makeCanvasTexture(256, (ctx, s) => {
+          ctx.fillStyle = '#7b7671';
+          ctx.fillRect(0, 0, s, s);
+          for (let i = 0; i < 2600; i++) {
+            const x = Math.random() * s;
+            const y = Math.random() * s;
+            const r = 1 + Math.random() * 2;
+            const v = 120 + Math.floor(Math.random() * 80);
+            ctx.fillStyle = `rgba(${v},${v},${v},0.08)`;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 0.22;
+          ctx.strokeStyle = '#3f3a36';
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 14; i++) {
+            ctx.beginPath();
+            ctx.moveTo(Math.random() * s, Math.random() * s);
+            ctx.lineTo(Math.random() * s, Math.random() * s);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        const rockBump = makeCanvasTexture(256, (ctx, s) => {
+          ctx.fillStyle = '#202020';
+          ctx.fillRect(0, 0, s, s);
+          for (let i = 0; i < 2000; i++) {
+            const x = Math.random() * s;
+            const y = Math.random() * s;
+            const r = 1 + Math.random() * 2;
+            const v = 120 + Math.floor(Math.random() * 120);
+            ctx.fillStyle = `rgba(${v},${v},${v},0.08)`;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+ 
+        const seedMap = makeCanvasTexture(256, (ctx, s) => {
+          ctx.clearRect(0, 0, s, s);
+          const cx = s * 0.5;
+          const cy = s * 0.62;
+          ctx.globalAlpha = 0.9;
+          ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - s * 0.34);
+          ctx.lineTo(cx, cy + s * 0.22);
+          ctx.stroke();
+          ctx.globalAlpha = 0.75;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 24; i++) {
+            const a = (i / 24) * Math.PI * 2;
+            const r = s * 0.22;
+            const x = cx + Math.cos(a) * r;
+            const y = cy - s * 0.26 + Math.sin(a) * r;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - s * 0.26);
+            ctx.quadraticCurveTo((cx + x) * 0.5, (cy - s * 0.34 + y) * 0.5, x, y);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        });
+ 
+        return { leafMap, leafBump, barkMap, barkBump, rockMap, rockBump, seedMap };
+      })();
+ 
+      const ModelFactory = (() => {
+        const leafShape = () => {
+          const s = new THREE.Shape();
+          s.moveTo(0, 160);
+          s.quadraticCurveTo(90, 120, 140, 40);
+          s.quadraticCurveTo(180, -20, 140, -120);
+          s.quadraticCurveTo(60, -210, 0, -230);
+          s.quadraticCurveTo(-60, -210, -140, -120);
+          s.quadraticCurveTo(-180, -20, -140, 40);
+          s.quadraticCurveTo(-90, 120, 0, 160);
+          return s;
+        };
+ 
+        const bendGeometryZ = (geom, amount = 20) => {
+          const pos = geom.attributes.position;
+          let minX = Infinity;
+          let maxX = -Infinity;
+          for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+          const w = Math.max(1, maxX - minX);
+          for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const t = (x - minX) / w;
+            const z = Math.sin((t - 0.5) * Math.PI) * amount;
+            pos.setZ(i, z);
+          }
+          pos.needsUpdate = true;
+          geom.computeVertexNormals();
+        };
+ 
+        const applyShadowFlags = (obj, { cast = true, receive = true } = {}) => {
+          obj.traverse((n) => {
+            if (n.isMesh) {
+              n.castShadow = cast;
+              n.receiveShadow = receive;
+            }
+          });
+        };
+ 
+        const createLeaf = () => {
+          const group = new THREE.Group();
+          group.userData.__interactiveRoot = true;
+          const shape = leafShape();
+          const geom = new THREE.ShapeGeometry(shape, 14);
+          bendGeometryZ(geom, 18);
+          geom.computeBoundingBox();
+          const mat = new THREE.MeshPhongMaterial({
+            map: TextureKit.leafMap,
+            bumpMap: TextureKit.leafBump,
+            bumpScale: 4.5,
+            color: 0xffffff,
+            shininess: 40,
+            specular: new THREE.Color(0x1b5e20),
+            side: THREE.DoubleSide
+          });
+          const leaf = new THREE.Mesh(geom, mat);
+          leaf.rotation.x = -0.35;
+          const midrib = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 360, 8, 1, true), new THREE.MeshPhongMaterial({ color: 0x14532d, shininess: 10 }));
+          midrib.rotation.z = Math.PI / 2;
+          midrib.rotation.y = Math.PI / 14;
+          midrib.position.set(0, -40, 10);
+          group.add(leaf, midrib);
+          applyShadowFlags(group, { cast: true, receive: true });
+          return group;
+        };
+ 
+        const createDandelion = () => {
+          const group = new THREE.Group();
+          group.userData.__interactiveRoot = true;
+          const stemMat = new THREE.MeshLambertMaterial({ color: 0x16a34a });
+          const headMat = new THREE.MeshLambertMaterial({ color: 0xf5f5f4 });
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(6, 10, 320, 12, 1), stemMat);
+          stem.position.set(0, -150, 0);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(28, 12, 10), headMat);
+          head.position.set(0, 20, 0);
+          const tuftGeom = new THREE.PlaneGeometry(26, 40, 1, 1);
+          const tuftMat = new THREE.MeshPhongMaterial({
+            map: TextureKit.seedMap,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            color: 0xffffff,
+            shininess: 20,
+            side: THREE.DoubleSide
+          });
+          const inst = new THREE.InstancedMesh(tuftGeom, tuftMat, 84);
+          const m = new THREE.Matrix4();
+          const q = new THREE.Quaternion();
+          const s = new THREE.Vector3(1, 1, 1);
+          const p = new THREE.Vector3();
+          for (let i = 0; i < 84; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const u = 0.15 + Math.random() * 0.85;
+            const elev = u * (Math.PI * 0.55);
+            const r = 74 + Math.random() * 12;
+            p.set(Math.cos(a) * Math.cos(elev) * r, 50 + Math.sin(elev) * r, Math.sin(a) * Math.cos(elev) * r * 0.6);
+            const outward = p.clone().sub(new THREE.Vector3(0, 50, 0)).normalize();
+            q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), outward);
+            const sc = 0.55 + Math.random() * 0.35;
+            s.set(sc, sc, sc);
+            m.compose(p, q, s);
+            inst.setMatrixAt(i, m);
+          }
+          inst.instanceMatrix.needsUpdate = true;
+          group.add(stem, head, inst);
+          applyShadowFlags(group, { cast: true, receive: true });
+          stem.receiveShadow = true;
+          return group;
+        };
+ 
+        const createTrunk = ({ deadMat, liveMat, useLive = false } = {}) => {
+          const group = new THREE.Group();
+          const matDead =
+            deadMat ||
+            new THREE.MeshPhongMaterial({
+              map: TextureKit.barkMap,
+              bumpMap: TextureKit.barkBump,
+              bumpScale: 6,
+              color: 0x7c6a5f,
+              shininess: 10
+            });
+          const matLive =
+            liveMat ||
+            new THREE.MeshPhongMaterial({
+              map: TextureKit.barkMap,
+              bumpMap: TextureKit.barkBump,
+              bumpScale: 6,
+              color: 0x6b8f58,
+              emissive: new THREE.Color(0x003344),
+              shininess: 18
+            });
+          const mat = useLive ? matLive : matDead;
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(88, 122, 540, 14, 10), mat);
+          trunk.position.set(0, -30, 0);
+          const knot = new THREE.Mesh(new THREE.SphereGeometry(44, 8, 6), mat);
+          knot.position.set(30, 30, 70);
+          knot.scale.set(1.1, 0.85, 0.7);
+          group.add(trunk, knot);
+          applyShadowFlags(group, { cast: true, receive: true });
+          group.userData = { trunk, knot, matDead, matLive };
+          group.userData.__interactiveRoot = true;
+          return group;
+        };
+ 
+        const distortGeometry = (geom, amount = 18) => {
+          const pos = geom.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+            const z = pos.getZ(i);
+            const n = (Math.sin(x * 0.04) + Math.cos(y * 0.05) + Math.sin(z * 0.06)) * 0.33;
+            pos.setXYZ(i, x + n * amount, y + n * amount, z + n * amount);
+          }
+          pos.needsUpdate = true;
+          geom.computeVertexNormals();
+        };
+ 
+        const createRock = () => {
+          const geom = new THREE.IcosahedronGeometry(125, 2);
+          distortGeometry(geom, 12);
+          const mat = new THREE.MeshPhongMaterial({
+            map: TextureKit.rockMap,
+            bumpMap: TextureKit.rockBump,
+            bumpScale: 7,
+            color: 0xffffff,
+            shininess: 6,
+            flatShading: true
+          });
+          const rock = new THREE.Mesh(geom, mat);
+          rock.userData.__interactiveRoot = true;
+          rock.scale.set(1.25, 0.95, 0.85);
+          rock.castShadow = true;
+          rock.receiveShadow = true;
+          return rock;
+        };
+ 
+        const createBug = () => {
+          const group = new THREE.Group();
+          group.userData.__interactiveRoot = true;
+          const bodyMat = new THREE.MeshPhongMaterial({ color: 0x111827, shininess: 25, specular: new THREE.Color(0x6b7280) });
+          const accentMat = new THREE.MeshPhongMaterial({ color: 0x0b1220, shininess: 35, specular: new THREE.Color(0x9ca3af) });
+          const body = new THREE.Mesh(new THREE.SphereGeometry(46, 8, 6), bodyMat);
+          body.scale.set(1.15, 0.95, 0.9);
+          body.position.set(0, -118, 0);
+          const abdomen = new THREE.Mesh(new THREE.SphereGeometry(38, 8, 6), bodyMat);
+          abdomen.scale.set(1.35, 1.0, 0.95);
+          abdomen.position.set(0, -160, -10);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(28, 8, 6), accentMat);
+          head.position.set(0, -82, 14);
+          const eyeMat = new THREE.MeshPhongMaterial({ color: 0x22c55e, emissive: new THREE.Color(0x22c55e), specular: new THREE.Color(0xffffff), shininess: 80 });
+          const eye1 = new THREE.Mesh(new THREE.SphereGeometry(8, 6, 4), eyeMat);
+          const eye2 = eye1.clone();
+          eye1.position.set(-12, -78, 30);
+          eye2.position.set(12, -78, 30);
+          const legGeom = new THREE.BoxGeometry(6, 44, 6);
+          const legMat = new THREE.MeshPhongMaterial({ color: 0x0b1220, shininess: 15 });
+          const legs = [];
+          const baseY = -128;
+          for (let side = -1; side <= 1; side += 2) {
+            for (let i = 0; i < 3; i++) {
+              const leg = new THREE.Mesh(legGeom, legMat);
+              leg.position.set(42 * side, baseY - i * 26, 0);
+              leg.rotation.z = side * (0.7 + i * 0.08);
+              leg.rotation.x = 0.25;
+              legs.push(leg);
+              group.add(leg);
+            }
+          }
+          const antGeom = new THREE.BoxGeometry(4, 50, 4);
+          const ant1 = new THREE.Mesh(antGeom, legMat);
+          const ant2 = ant1.clone();
+          ant1.position.set(-14, -52, 20);
+          ant2.position.set(14, -52, 20);
+          ant1.rotation.z = 0.35;
+          ant2.rotation.z = -0.35;
+          ant1.rotation.x = -0.4;
+          ant2.rotation.x = -0.4;
+          group.add(body, abdomen, head, eye1, eye2, ant1, ant2);
+          applyShadowFlags(group, { cast: true, receive: true });
+          return group;
+        };
+ 
+        const createGround = ({ y = -window.innerHeight * 0.36, opacity = 0.09 } = {}) => {
+          const geom = new THREE.PlaneGeometry(window.innerWidth * 1.4, window.innerHeight * 0.8, 1, 1);
+          const mat = new THREE.MeshPhongMaterial({ color: 0x000000, transparent: true, opacity });
+          const plane = new THREE.Mesh(geom, mat);
+          plane.rotation.x = -Math.PI / 2;
+          plane.position.set(0, y, -140);
+          plane.receiveShadow = true;
+          plane.castShadow = false;
+          return plane;
+        };
+ 
+        return { createLeaf, createDandelion, createTrunk, createRock, createBug, createGround };
+      })();
+ 
+      const UI = {
+        homeView: document.getElementById('homeView'),
+        levelView: document.getElementById('levelView'),
+        levelTitle: document.getElementById('levelTitle'),
+        backHome: document.getElementById('backHome'),
+        startGate: document.getElementById('startGate'),
+        gateTitle: document.getElementById('gateTitle'),
+        gateDesc: document.getElementById('gateDesc'),
+        gateButton: document.getElementById('gateButton'),
+        backpackIcon: document.getElementById('backpackIcon'),
+        leafSprite: document.getElementById('leafSprite'),
+        touchAreaHint: document.getElementById('touchAreaHint'),
+        transformHud: document.getElementById('transformHud'),
+        blackoutOverlay: document.getElementById('blackoutOverlay'),
+        appRoot: document.getElementById('appRoot')
+      };
+ 
+      let activeGateHandler = null;
+      const showGate = ({ title, desc, onStart }) => {
+        UI.gateTitle.textContent = title;
+        UI.gateDesc.textContent = desc;
+        UI.startGate.classList.remove('hidden');
+        UI.startGate.classList.add('flex');
+        const handler = async () => {
+          UI.gateButton.removeEventListener('click', handler);
+          activeGateHandler = null;
+          UI.gateButton.disabled = true;
+          UI.gateButton.textContent = '启动中...';
+          try {
+            await onStart();
+            UI.startGate.classList.add('hidden');
+            UI.startGate.classList.remove('flex');
+          } catch (e) {
+            Telemetry.report('gate_start_failed', e);
+            toast('启动失败：请允许权限后重试');
+          } finally {
+            UI.gateButton.disabled = false;
+            UI.gateButton.textContent = '点击开始';
+          }
+        };
+        if (activeGateHandler) UI.gateButton.removeEventListener('click', activeGateHandler);
+        activeGateHandler = handler;
+        UI.gateButton.addEventListener('click', handler);
+      };
+ 
+      const Router = (() => {
+        const routes = new Map();
+        const nav = (path) => {
+          location.hash = `#${path}`;
+        };
+        const add = (path, fn) => routes.set(path, fn);
+        const start = () => {
+          const resolve = () => {
+            const path = (location.hash || '#/').slice(1);
+            const handler = routes.get(path) || routes.get('/');
+            handler?.();
+          };
+          window.addEventListener('hashchange', resolve);
+          resolve();
+        };
+        return { nav, add, start };
+      })();
+ 
+      class LevelBase {
+        constructor(id, title) {
+          this.id = id;
+          this.title = title;
+          this._cleanup = [];
+        }
+        on(el, evt, fn, opts) {
+          el.addEventListener(evt, fn, opts);
+          this._cleanup.push(() => el.removeEventListener(evt, fn, opts));
+        }
+        cleanup() {
+          this._cleanup.forEach((f) => f());
+          this._cleanup = [];
+        }
+        async mount() {}
+        async start() {}
+        async unmount() {
+          this.cleanup();
+        }
+      }
+ 
+      class Level1PinchCollect extends LevelBase {
+        constructor(ctx) {
+          super('level1', 'B1 捏取（收集）');
+          this.ctx = ctx;
+          this.scene = null;
+          this.camera = null;
+          this.leafMesh = null;
+          this.targetEl = null;
+          this.collected = false;
+          this._check = null;
+        }
+        async mount() {
+          UI.backpackIcon.classList.remove('hidden');
+          UI.backpackIcon.classList.add('flex');
+          UI.leafSprite.classList.remove('hidden');
+          const centerX = window.innerWidth * 0.5;
+          const centerY = window.innerHeight * 0.68;
+          UI.leafSprite.style.left = `${centerX}px`;
+          UI.leafSprite.style.top = `${centerY}px`;
+          this.targetEl = UI.leafSprite;
+          this.scene = new THREE.Scene();
+          this.camera = makeOrtho();
+          makeLight(this.scene);
+          const leaf = ModelFactory.createLeaf();
+          leaf.position.set(0, -window.innerHeight * 0.18, 0);
+          leaf.rotation.z = -0.4;
+          this.leafMesh = leaf;
+          this.scene.add(leaf);
+          this.ctx.interaction.setTargets([leaf]);
+          let t0 = performance.now();
+          this.ctx.three.setScene(this.scene, this.camera, (t) => {
+            const dt = (t - t0) / 1000;
+            t0 = t;
+            if (this.leafMesh && !this.collected) {
+              this.leafMesh.rotation.z += dt * 0.4;
+              this.leafMesh.position.y += Math.sin(t / 420) * 0.25;
+              const sx = window.innerWidth * 0.5 + this.leafMesh.position.x;
+              const sy = window.innerHeight * 0.5 - this.leafMesh.position.y;
+              UI.leafSprite.style.left = `${sx}px`;
+              UI.leafSprite.style.top = `${sy}px`;
+            }
+          });
+          UI.touchAreaHint.classList.remove('hidden');
+          UI.touchAreaHint.textContent = '用两指捏住树叶收集到背包里';
+          UI.touchAreaHint.style.left = '16px';
+          UI.touchAreaHint.style.bottom = '16px';
+        }
+        async start() {
+          this.collected = false;
+          await this.ctx.hands.start();
+          const check = () => {
+            if (this.collected) return;
+            const p = this.ctx.hands.getPinchPointViewport({ pinchThreshold: 0.045 });
+            if (p) {
+              const r = this.targetEl.getBoundingClientRect();
+              if (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) {
+                this._collect();
+              }
+            }
+            this._check = requestAnimationFrame(check);
+          };
+          this._check = requestAnimationFrame(check);
+        }
+        async _collect() {
+          this.collected = true;
+          if (this.leafMesh) this.leafMesh.visible = false;
+          await this.ctx.audio.playOneShot(AudioPaths.ding, { volume: 0.9 }).catch(() => {});
+          const leafEl = UI.leafSprite;
+          const bagEl = UI.backpackIcon;
+          const a = leafEl.getBoundingClientRect();
+          const b = bagEl.getBoundingClientRect();
+          const dx = b.left + b.width * 0.5 - (a.left + a.width * 0.5);
+          const dy = b.top + b.height * 0.5 - (a.top + a.height * 0.5);
+          leafEl.style.transition = 'transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 520ms ease';
+          leafEl.style.transform = `translate(${dx}px, ${dy}px) scale(0.2)`;
+          leafEl.style.opacity = '0.2';
+          toast('收集成功！');
+          setTimeout(() => {
+            leafEl.classList.add('hidden');
+          }, 560);
+        }
+        async unmount() {
+          if (this._check) cancelAnimationFrame(this._check);
+          this._check = null;
+          UI.backpackIcon.classList.add('hidden');
+          UI.backpackIcon.classList.remove('flex');
+          UI.leafSprite.classList.add('hidden');
+          UI.leafSprite.style.transition = '';
+          UI.leafSprite.style.transform = 'translate(-50%, -50%)';
+          UI.leafSprite.style.opacity = '1';
+          UI.touchAreaHint.classList.add('hidden');
+          this.ctx.hands.stop();
+          await super.unmount();
+        }
+      }
+ 
+      class Level2Blow extends LevelBase {
+        constructor(ctx) {
+          super('level2', 'B2 吹气（风）');
+          this.ctx = ctx;
+          this.scene = null;
+          this.camera = null;
+          this.dandelion = null;
+          this.particles = null;
+          this.vel = null;
+          this._loop = null;
+          this._aboveMs = 0;
+          this._done = false;
+        }
+        async mount() {
+          UI.touchAreaHint.classList.remove('hidden');
+          UI.touchAreaHint.textContent = '对着麦克风用力吹气 1 秒钟';
+          UI.touchAreaHint.style.left = '16px';
+          UI.touchAreaHint.style.bottom = '16px';
+          this.scene = new THREE.Scene();
+          this.camera = makeOrtho();
+          makeLight(this.scene);
+          this.dandelion = ModelFactory.createDandelion();
+          this.dandelion.position.set(0, -30, 0);
+          this.scene.add(this.dandelion);
+          this.ctx.interaction.setTargets([this.dandelion]);
+          this.ctx.three.setScene(this.scene, this.camera, (t) => {
+            if (this.dandelion && !this._done) {
+              this.dandelion.rotation.z = Math.sin(t / 500) * 0.08;
+            }
+            if (this.particles) {
+              const pos = this.particles.geometry.attributes.position;
+              for (let i = 0; i < pos.count; i++) {
+                pos.array[i * 3 + 0] += this.vel[i * 3 + 0];
+                pos.array[i * 3 + 1] += this.vel[i * 3 + 1];
+                pos.array[i * 3 + 2] += this.vel[i * 3 + 2];
+                this.vel[i * 3 + 1] -= 0.002;
+              }
+              pos.needsUpdate = true;
+            }
+          });
+        }
+        async start() {
+          this._done = false;
+          this._aboveMs = 0;
+          await this.ctx.mic.start();
+          const threshold = 0.14;
+          let last = performance.now();
+          const loop = () => {
+            if (this._done) return;
+            const now = performance.now();
+            const dt = now - last;
+            last = now;
+            const rms = this.ctx.mic.getRms();
+            if (rms > threshold) this._aboveMs += dt;
+            else this._aboveMs = Math.max(0, this._aboveMs - dt * 0.8);
+            if (this._aboveMs >= 1000) this._success();
+            this._loop = requestAnimationFrame(loop);
+          };
+          this._loop = requestAnimationFrame(loop);
+        }
+        async _success() {
+          this._done = true;
+          if (this._loop) cancelAnimationFrame(this._loop);
+          this._loop = null;
+          await this.ctx.audio.playOneShot(AudioPaths.wind, { volume: 0.9 }).catch(() => {});
+          toast('风把种子吹散了！');
+          if (this.dandelion) this.dandelion.visible = false;
+          const count = 900;
+          const geom = new THREE.BufferGeometry();
+          const positions = new Float32Array(count * 3);
+          const vel = new Float32Array(count * 3);
+          for (let i = 0; i < count; i++) {
+            positions[i * 3 + 0] = (Math.random() - 0.5) * 50;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 50;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 10;
+            vel[i * 3 + 0] = (Math.random() - 0.5) * 2.8;
+            vel[i * 3 + 1] = Math.random() * 2.2 + 1.2;
+            vel[i * 3 + 2] = (Math.random() - 0.5) * 0.6;
+          }
+          geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 3.2, transparent: true, opacity: 0.9 });
+          this.particles = new THREE.Points(geom, mat);
+          this.vel = vel;
+          this.particles.position.set(0, 30, 0);
+          this.scene.add(this.particles);
+        }
+        async unmount() {
+          if (this._loop) cancelAnimationFrame(this._loop);
+          this._loop = null;
+          UI.touchAreaHint.classList.add('hidden');
+          this.ctx.mic.stop();
+          await super.unmount();
+        }
+      }
+ 
+      class Level3Stroke extends LevelBase {
+        constructor(ctx) {
+          super('level3', 'C3 抚摸（唤醒）');
+          this.ctx = ctx;
+          this.scene = null;
+          this.camera = null;
+          this.tree = null;
+          this.deadMat = null;
+          this.liveMat = null;
+          this.touchRect = null;
+          this._last = null;
+          this._dist = 0;
+          this._done = false;
+          this._pulse = rafThrottle(() => this._pulseFeedback(), 260);
+        }
+        async mount() {
+          UI.touchAreaHint.classList.remove('hidden');
+          UI.touchAreaHint.textContent = '在树干上来回抚摸，唤醒它';
+          UI.touchAreaHint.style.left = '16px';
+          UI.touchAreaHint.style.bottom = '16px';
+          this.scene = new THREE.Scene();
+          this.camera = makeOrtho();
+          makeLight(this.scene);
+          this.deadMat = new THREE.MeshPhongMaterial({
+            map: TextureKit.barkMap,
+            bumpMap: TextureKit.barkBump,
+            bumpScale: 6,
+            color: 0x6b7280,
+            shininess: 10
+          });
+          this.liveMat = new THREE.MeshPhongMaterial({
+            map: TextureKit.barkMap,
+            bumpMap: TextureKit.barkBump,
+            bumpScale: 6,
+            color: 0x22c55e,
+            emissive: new THREE.Color(0x000000),
+            shininess: 18
+          });
+          this.tree = ModelFactory.createTrunk({ deadMat: this.deadMat, liveMat: this.liveMat, useLive: false });
+          this.scene.add(ModelFactory.createGround({ y: -window.innerHeight * 0.36, opacity: 0.1 }));
+          this.scene.add(this.tree);
+          this.ctx.interaction.setTargets([this.tree]);
+          const touchArea = document.createElement('div');
+          touchArea.id = 'treeTouchArea';
+          touchArea.className = 'absolute left-1/2 top-1/2 z-20 h-[60vh] w-[70vw] -translate-x-1/2 -translate-y-1/2 rounded-[2.5rem] border-2 border-white/20 bg-white/5 backdrop-blur-sm';
+          touchArea.style.pointerEvents = 'auto';
+          UI.levelView.appendChild(touchArea);
+          this._cleanup.push(() => touchArea.remove());
+          const updateRect = () => {
+            this.touchRect = touchArea.getBoundingClientRect();
+          };
+          updateRect();
+          window.addEventListener('resize', updateRect);
+          this._cleanup.push(() => window.removeEventListener('resize', updateRect));
+          this.on(touchArea, 'touchstart', (e) => {
+            const t = e.touches[0];
+            this._last = { x: t.clientX, y: t.clientY };
+          }, { passive: true });
+          this.on(touchArea, 'touchmove', (e) => {
+            if (this._done) return;
+            if (this.ctx.interaction.isTransforming) return;
+            const t = e.touches[0];
+            if (!this._last) this._last = { x: t.clientX, y: t.clientY };
+            const dx = t.clientX - this._last.x;
+            const dy = t.clientY - this._last.y;
+            this._last = { x: t.clientX, y: t.clientY };
+            const d = Math.hypot(dx, dy);
+            this._dist += d;
+            this._pulse();
+            const p = clamp(this._dist / 3200, 0, 1);
+            this._applyLife(p);
+            if (this._dist >= 3200) this._success();
+          }, { passive: true });
+          this.on(touchArea, 'touchend', () => {
+            this._last = null;
+          }, { passive: true });
+          this.ctx.three.setScene(this.scene, this.camera, (t) => {
+            if (this.tree) {
+              this.tree.rotation.y = Math.sin(t / 900) * 0.12;
+              this.tree.rotation.z = Math.sin(t / 1100) * 0.02;
+            }
+          });
+        }
+        async start() {
+          this._dist = 0;
+          this._done = false;
+          this._applyLife(0);
+        }
+        async _pulseFeedback() {
+          UI.appRoot.classList.remove('shake');
+          void UI.appRoot.offsetWidth;
+          UI.appRoot.classList.add('shake');
+          await this.ctx.audio.playOneShot(AudioPaths.heartbeat, { volume: 0.6 }).catch(() => {});
+        }
+        _applyLife(p) {
+          const col = new THREE.Color(0x6b7280).lerp(new THREE.Color(0x22c55e), p);
+          this.deadMat.color.copy(col);
+          const e = clamp(p, 0, 1);
+          this.liveMat.emissive.setRGB(0.02, 0.12 * e, 0.22 * e);
+          if (p > 0.8 && this.tree)
+            this.tree.traverse((n) => {
+              if (n.isMesh) n.material = this.liveMat;
+            });
+        }
+        async _success() {
+          this._done = true;
+          toast('树木醒来了！');
+          this.tree.traverse((n) => {
+            if (n.isMesh) n.material = this.liveMat;
+          });
+          const start = performance.now();
+          const dur = 900;
+          const tick = (t) => {
+            const p = clamp((t - start) / dur, 0, 1);
+            this.liveMat.emissive.setRGB(0.03, 0.18 * (0.35 + p * 0.65), 0.32 * (0.35 + p * 0.65));
+            if (p < 1) requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }
+        async unmount() {
+          UI.touchAreaHint.classList.add('hidden');
+          UI.appRoot.classList.remove('shake');
+          await super.unmount();
+        }
+      }
+ 
+      class Level4FlipReveal extends LevelBase {
+        constructor(ctx) {
+          super('level4', 'A3 翻开（发现）');
+          this.ctx = ctx;
+          this.scene = null;
+          this.camera = null;
+          this.rock = null;
+          this.bug = null;
+          this._flickDown = null;
+          this._anim = null;
+        }
+        async mount() {
+          UI.touchAreaHint.classList.remove('hidden');
+          UI.touchAreaHint.textContent = '按住石头，用力向上快速滑动';
+          UI.touchAreaHint.style.left = '16px';
+          UI.touchAreaHint.style.bottom = '16px';
+          this.scene = new THREE.Scene();
+          this.camera = makeOrtho();
+          makeLight(this.scene);
+          this.scene.add(ModelFactory.createGround({ y: -window.innerHeight * 0.36, opacity: 0.09 }));
+          const rock = ModelFactory.createRock();
+          rock.position.set(0, -40, 0);
+          this.rock = rock;
+          const bug = ModelFactory.createBug();
+          bug.visible = false;
+          this.bug = bug;
+          this.scene.add(bug, rock);
+          this.ctx.interaction.setTargets([rock, bug]);
+          this.ctx.three.setScene(this.scene, this.camera, (t) => {
+            if (this.rock) this.rock.rotation.y = Math.sin(t / 800) * 0.18;
+            if (this.bug && this.bug.visible) this.bug.rotation.y = Math.sin(t / 700) * 0.22;
+          });
+          this.on(document, 'pointerdown', (e) => {
+            if (!this.ctx.interaction.enabled) return;
+            if (!this.ctx.interaction.isTransforming) return;
+            if (this.ctx.interaction.activeRoot !== this.rock) return;
+            if (this.ctx.interaction.mode === 'rotate') return;
+            this._flickDown = { y: e.clientY, t: performance.now() };
+          }, { capture: true });
+          this.on(document, 'pointerup', async (e) => {
+            if (!this._flickDown) return;
+            const dy = e.clientY - this._flickDown.y;
+            const dt = performance.now() - this._flickDown.t;
+            this._flickDown = null;
+            if (dy < -140 && dt < 420) {
+              await this.ctx.audio.playOneShot(AudioPaths.rock, { volume: 0.85 }).catch(() => {});
+              this._reveal();
+            }
+          }, { capture: true });
+        }
+        async start() {}
+        _reveal() {
+          if (!this.rock || !this.bug) return;
+          this.bug.visible = true;
+          toast('发现昆虫！');
+          const startY = this.rock.position.y;
+          const endY = startY + window.innerHeight * 0.9;
+          const start = performance.now();
+          const dur = 520;
+          const tick = (t) => {
+            const p = clamp((t - start) / dur, 0, 1);
+            const ease = 1 - Math.pow(1 - p, 3);
+            this.rock.position.y = startY + (endY - startY) * ease;
+            this.rock.rotation.z += 0.03;
+            if (p < 1) this._anim = requestAnimationFrame(tick);
+          };
+          this._anim = requestAnimationFrame(tick);
+        }
+        async unmount() {
+          if (this._anim) cancelAnimationFrame(this._anim);
+          this._anim = null;
+          UI.touchAreaHint.classList.add('hidden');
+          await super.unmount();
+        }
+      }
+ 
+      class Level5Listen extends LevelBase {
+        constructor(ctx) {
+          super('level5', 'A5 倾听（熄屏）');
+          this.ctx = ctx;
+          this.scene = null;
+          this.camera = null;
+          this._canvas = document.createElement('canvas');
+          this._ctx2d = this._canvas.getContext('2d', { willReadFrequently: true });
+          this._timer = null;
+          this._dark = false;
+          this._textEl = null;
+        }
+        async mount() {
+          this.scene = new THREE.Scene();
+          this.camera = makeOrtho();
+          makeLight(this.scene);
+          const trunkMat = new THREE.MeshPhongMaterial({
+            map: TextureKit.barkMap,
+            bumpMap: TextureKit.barkBump,
+            bumpScale: 6,
+            color: 0x6b4b3a,
+            shininess: 10
+          });
+          const trunk = ModelFactory.createTrunk({ deadMat: trunkMat, useLive: false });
+          trunk.position.set(0, 40, 0);
+          trunk.scale.set(0.9, 0.9, 0.9);
+          this._trunk = trunk;
+          this.scene.add(ModelFactory.createGround({ y: -window.innerHeight * 0.36, opacity: 0.06 }));
+          this.scene.add(trunk);
+          this.ctx.interaction.setTargets([trunk]);
+          this.ctx.three.setScene(this.scene, this.camera, (t) => {
+            if (this._trunk) this._trunk.rotation.y = Math.sin(t / 1000) * 0.12;
+          });
+          const text = document.createElement('div');
+          text.className = 'absolute left-1/2 top-1/2 z-20 w-[min(92vw,34rem)] -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-black/50 p-6 text-center text-base font-semibold leading-relaxed text-white/90 backdrop-blur';
+          text.textContent = '请闭上眼睛，将手机屏幕紧紧贴在你的胸口或耳朵上';
+          UI.levelView.appendChild(text);
+          this._textEl = text;
+          this._cleanup.push(() => text.remove());
+          UI.blackoutOverlay.classList.add('hidden');
+          this._canvas.width = 32;
+          this._canvas.height = 32;
+        }
+        async start() {
+          const sample = async () => {
+            if (!this.ctx.camera.ready) return;
+            const v = this.ctx.video;
+            if (!v.videoWidth || !v.videoHeight) return;
+            this._ctx2d.drawImage(v, 0, 0, this._canvas.width, this._canvas.height);
+            const img = this._ctx2d.getImageData(0, 0, this._canvas.width, this._canvas.height).data;
+            let sum = 0;
+            for (let i = 0; i < img.length; i += 4) sum += (img[i] + img[i + 1] + img[i + 2]) / 3;
+            const avg = sum / (img.length / 4);
+            const dark = avg < 10;
+            if (dark !== this._dark) {
+              this._dark = dark;
+              if (dark) {
+                UI.blackoutOverlay.classList.remove('hidden');
+                await this.ctx.audio.startLoop(AudioPaths.nature, { volume: 0.7 }).catch(() => {});
+              } else {
+                UI.blackoutOverlay.classList.add('hidden');
+                await this.ctx.audio.stopLoop();
+              }
+            }
+          };
+          await sample();
+          this._timer = setInterval(sample, 1000);
+        }
+        async unmount() {
+          if (this._timer) clearInterval(this._timer);
+          this._timer = null;
+          UI.blackoutOverlay.classList.add('hidden');
+          await this.ctx.audio.stopLoop();
+          await super.unmount();
+        }
+      }
+ 
+      class App {
+        constructor() {
+          this.video = document.getElementById('cameraVideo');
+          this.camera = new CameraManager(this.video);
+          this.audio = new AudioManager();
+          this.mic = new MicAnalyser(this.audio);
+          this.hands = new HandsTracker(this.video);
+          this.three = new ThreeLayer(document.getElementById('threeCanvas'));
+          this.three.start();
+          this.interaction = new ThreeInteractor(this.three, UI);
+          this.currentLevel = null;
+          this.levels = new Map();
+          this._wireUI();
+          this._initRoutes();
+        }
+        async dispose() {
+          try {
+            await this._leaveLevel();
+          } catch {}
+          try {
+            this.camera.stop();
+          } catch {}
+          try {
+            this.hands.stop();
+          } catch {}
+          try {
+            this.mic.stop();
+          } catch {}
+          try {
+            await this.audio.stopLoop();
+          } catch {}
+          try {
+            this.three.stop();
+          } catch {}
+        }
+        _wireUI() {
+          document.querySelectorAll('[data-nav]').forEach((btn) => {
+            btn.addEventListener('click', () => Router.nav(`/${btn.dataset.nav}`), { passive: true });
+          });
+          UI.backHome.addEventListener('click', () => Router.nav('/'), { passive: true });
+        }
+        _initRoutes() {
+          Router.add('/', async () => {
+            await this._leaveLevel();
+            UI.levelView.classList.add('hidden');
+            UI.homeView.classList.remove('hidden');
+          });
+          ['level1', 'level2', 'level3', 'level4', 'level5'].forEach((id) => {
+            Router.add(`/${id}`, async () => {
+              UI.homeView.classList.add('hidden');
+              UI.levelView.classList.remove('hidden');
+              await this._enterLevel(id);
+            });
+          });
+          Router.start();
+        }
+        async _ensureBaseReady({ needMic = false } = {}) {
+          await this.audio.initFromGesture();
+          await this.camera.start();
+          if (needMic) await this.mic.start();
+        }
+        async _enterLevel(id) {
+          await this._leaveLevel();
+          UI.levelTitle.textContent = id;
+          UI.backpackIcon.classList.add('hidden');
+          UI.backpackIcon.classList.remove('flex');
+          UI.leafSprite.classList.add('hidden');
+          UI.touchAreaHint.classList.add('hidden');
+          UI.transformHud.classList.add('hidden');
+          UI.blackoutOverlay.classList.add('hidden');
+          const ctx = { video: this.video, camera: this.camera, audio: this.audio, mic: this.mic, hands: this.hands, three: this.three, interaction: this.interaction };
+          let level = this.levels.get(id);
+          if (!level) {
+            if (id === 'level1') level = new Level1PinchCollect(ctx);
+            if (id === 'level2') level = new Level2Blow(ctx);
+            if (id === 'level3') level = new Level3Stroke(ctx);
+            if (id === 'level4') level = new Level4FlipReveal(ctx);
+            if (id === 'level5') level = new Level5Listen(ctx);
+            this.levels.set(id, level);
+          }
+          this.currentLevel = level;
+          UI.levelTitle.textContent = level.title;
+          await level.mount();
+          const gateConfig = this._gateForLevel(id);
+          showGate({
+            title: gateConfig.title,
+            desc: gateConfig.desc,
+            onStart: async () => {
+              await this._ensureBaseReady({ needMic: gateConfig.needMic });
+              await gateConfig.prefetch?.();
+              await level.start();
+            }
+          });
+        }
+        _gateForLevel(id) {
+          if (id === 'level1') {
+            return {
+              title: 'B1 捏取收集',
+              desc: '点击开始后将启用摄像头与手势追踪。用拇指和食指捏住树叶即可收集。',
+              needMic: false,
+              prefetch: async () => {
+                await this.audio.load(AudioPaths.ding).catch(() => {});
+              }
+            };
+          }
+          if (id === 'level2') {
+            return {
+              title: 'B2 吹气',
+              desc: '点击开始后将启用摄像头、麦克风与音频。对着麦克风持续吹气 1 秒钟。',
+              needMic: true,
+              prefetch: async () => {
+                await Promise.all([this.audio.load(AudioPaths.wind).catch(() => {}), this.audio.load(AudioPaths.ding).catch(() => {})]);
+              }
+            };
+          }
+          if (id === 'level3') {
+            return {
+              title: 'C3 抚摸唤醒',
+              desc: '点击开始后启用摄像头与音频。用手指在树干区域来回抚摸，直到它变绿发光。',
+              needMic: false,
+              prefetch: async () => {
+                await this.audio.load(AudioPaths.heartbeat).catch(() => {});
+              }
+            };
+          }
+          if (id === 'level4') {
+            return {
+              title: 'A3 翻开揭示',
+              desc: '点击开始后启用摄像头与音频。按住石头快速向上滑动，把它推开。',
+              needMic: false,
+              prefetch: async () => {
+                await this.audio.load(AudioPaths.rock).catch(() => {});
+              }
+            };
+          }
+          return {
+            title: 'A5 倾听熄屏',
+            desc: '点击开始后启用摄像头与音频。遮挡摄像头时屏幕变黑并播放自然白噪音，移开后恢复。',
+            needMic: false,
+            prefetch: async () => {
+              await this.audio.load(AudioPaths.nature).catch(() => {});
+            }
+          };
+        }
+        async _leaveLevel() {
+          UI.startGate.classList.add('hidden');
+          UI.startGate.classList.remove('flex');
+          UI.blackoutOverlay.classList.add('hidden');
+          UI.backpackIcon.classList.add('hidden');
+          UI.backpackIcon.classList.remove('flex');
+          UI.leafSprite.classList.add('hidden');
+          UI.touchAreaHint.classList.add('hidden');
+          UI.transformHud.classList.add('hidden');
+          this.hands.stop();
+          this.mic.stop();
+          this.interaction.clearTargets();
+          await this.audio.stopLoop();
+          if (this.currentLevel) {
+            try {
+              await this.currentLevel.unmount();
+            } catch {}
+          }
+          this.currentLevel = null;
+          this.three.stop();
+          this.three.start();
+        }
+      }
+ 
+      const boot = async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          toast('当前浏览器不支持摄像头/麦克风 API');
+          return;
+        }
+        const app = new App();
+        window.__embodiedDemoApp = app;
+        window.addEventListener('pagehide', () => {
+          app.dispose();
+        });
+        window.addEventListener('beforeunload', () => {
+          app.dispose();
+        });
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) return;
+          try {
+            app.hands.stop();
+          } catch {}
+          try {
+            app.mic.stop();
+          } catch {}
+          app.audio.stopLoop().catch(() => {});
+        });
+      };
+ 
+      boot();
+    </script>
+  </body>
+</html>
