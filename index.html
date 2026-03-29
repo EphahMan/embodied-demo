@@ -132,6 +132,13 @@
       };
  
       const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const clientToWorldOrtho = (camera, clientX, clientY) => {
+        const w = window.innerWidth || 1;
+        const h = window.innerHeight || 1;
+        const ndc = new THREE.Vector3((clientX / w) * 2 - 1, -(clientY / h) * 2 + 1, 0);
+        return ndc.unproject(camera);
+      };
  
       const rafThrottle = (fn, minMs) => {
         let last = 0;
@@ -388,33 +395,59 @@
           this.audioManager = audioManager;
           this.stream = null;
           this.analyser = null;
-          this.data = null;
+          this.timeData = null;
+          this.freqData = null;
+          this._hp = null;
+          this._lastLevel = 0;
         }
         async start() {
           if (this.analyser) return;
           await this.audioManager.initFromGesture();
           this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
           const src = this.audioManager.ctx.createMediaStreamSource(this.stream);
+          this._hp = this.audioManager.ctx.createBiquadFilter();
+          this._hp.type = 'highpass';
+          this._hp.frequency.value = 120;
           this.analyser = this.audioManager.ctx.createAnalyser();
-          this.analyser.fftSize = 1024;
-          src.connect(this.analyser);
-          this.data = new Uint8Array(this.analyser.fftSize);
+          this.analyser.fftSize = 2048;
+          this.analyser.smoothingTimeConstant = 0.75;
+          src.connect(this._hp);
+          this._hp.connect(this.analyser);
+          this.timeData = new Uint8Array(this.analyser.fftSize);
+          this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
         }
         stop() {
           if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
           this.stream = null;
           this.analyser = null;
-          this.data = null;
+          this.timeData = null;
+          this.freqData = null;
+          this._hp = null;
+          this._lastLevel = 0;
         }
         getRms() {
-          if (!this.analyser || !this.data) return 0;
-          this.analyser.getByteTimeDomainData(this.data);
+          if (!this.analyser || !this.timeData) return 0;
+          this.analyser.getByteTimeDomainData(this.timeData);
           let sum = 0;
-          for (let i = 0; i < this.data.length; i++) {
-            const v = (this.data[i] - 128) / 128;
+          for (let i = 0; i < this.timeData.length; i++) {
+            const v = (this.timeData[i] - 128) / 128;
             sum += v * v;
           }
-          return Math.sqrt(sum / this.data.length);
+          return Math.sqrt(sum / this.timeData.length);
+        }
+        getLevel({ lowHz = 250, highHz = 2400 } = {}) {
+          if (!this.analyser || !this.freqData) return 0;
+          this.analyser.getByteFrequencyData(this.freqData);
+          const sr = this.audioManager.ctx.sampleRate || 48000;
+          const binHz = sr / this.analyser.fftSize;
+          const lo = clamp(Math.floor(lowHz / binHz), 0, this.freqData.length - 1);
+          const hi = clamp(Math.floor(highHz / binHz), lo + 1, this.freqData.length);
+          let sum = 0;
+          for (let i = lo; i < hi; i++) sum += this.freqData[i];
+          const avg = sum / Math.max(1, hi - lo);
+          const norm = clamp(avg / 255, 0, 1);
+          this._lastLevel = this._lastLevel ? lerp(this._lastLevel, norm, 0.35) : norm;
+          return this._lastLevel;
         }
       }
  
@@ -1155,6 +1188,7 @@
             opacity: 0.9,
             depthWrite: false,
             color: 0xffffff,
+            emissive: new THREE.Color(0x222222),
             shininess: 20,
             side: THREE.DoubleSide
           });
@@ -1163,15 +1197,20 @@
           const q = new THREE.Quaternion();
           const s = new THREE.Vector3(1, 1, 1);
           const p = new THREE.Vector3();
-          for (let i = 0; i < 84; i++) {
-            const a = Math.random() * Math.PI * 2;
-            const u = 0.15 + Math.random() * 0.85;
-            const elev = u * (Math.PI * 0.55);
-            const r = 74 + Math.random() * 12;
-            p.set(Math.cos(a) * Math.cos(elev) * r, 50 + Math.sin(elev) * r, Math.sin(a) * Math.cos(elev) * r * 0.6);
-            const outward = p.clone().sub(new THREE.Vector3(0, 50, 0)).normalize();
+          const n = 84;
+          const golden = Math.PI * (3 - Math.sqrt(5));
+          const center = new THREE.Vector3(0, 50, 0);
+          for (let i = 0; i < n; i++) {
+            const y = 1 - (2 * (i + 0.5)) / n;
+            const r = Math.sqrt(Math.max(0, 1 - y * y));
+            const phi = i * golden;
+            const x = Math.cos(phi) * r;
+            const z = Math.sin(phi) * r;
+            const radius = 82;
+            p.set(x * radius, 50 + y * radius, z * radius * 0.62);
+            const outward = p.clone().sub(center).normalize();
             q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), outward);
-            const sc = 0.55 + Math.random() * 0.35;
+            const sc = 0.62 + ((i * 31) % 17) * 0.01;
             s.set(sc, sc, sc);
             m.compose(p, q, s);
             inst.setMatrixAt(i, m);
@@ -1501,6 +1540,10 @@
           this._loop = null;
           this._aboveMs = 0;
           this._done = false;
+          this._baseline = 0;
+          this._baselineMs = 0;
+          this._held = false;
+          this._holdPos = new THREE.Vector3();
         }
         async mount() {
           UI.touchAreaHint.classList.remove('hidden');
@@ -1518,6 +1561,9 @@
             if (this.dandelion && !this._done) {
               this.dandelion.rotation.z = Math.sin(t / 500) * 0.08;
             }
+            if (this.dandelion && this._held) {
+              this.dandelion.position.lerp(this._holdPos, 0.35);
+            }
             if (this.particles) {
               const pos = this.particles.geometry.attributes.position;
               for (let i = 0; i < pos.count; i++) {
@@ -1533,18 +1579,43 @@
         async start() {
           this._done = false;
           this._aboveMs = 0;
+          this._baseline = 0;
+          this._baselineMs = 0;
+          this._held = false;
+          this.ctx.interaction.enabled = true;
           await this.ctx.mic.start();
-          const threshold = 0.14;
+          await this.ctx.hands.start({ targetFps: 15 });
           let last = performance.now();
           const loop = () => {
             if (this._done) return;
             const now = performance.now();
             const dt = now - last;
             last = now;
-            const rms = this.ctx.mic.getRms();
-            if (rms > threshold) this._aboveMs += dt;
-            else this._aboveMs = Math.max(0, this._aboveMs - dt * 0.8);
-            if (this._aboveMs >= 1000) this._success();
+            const pinch = this.ctx.hands.getPinchPointViewport({ pinchThreshold: 0.045 });
+            if (pinch && this.camera && this.dandelion && !this._done) {
+              this._held = true;
+              this.ctx.interaction.enabled = false;
+              const w = clientToWorldOrtho(this.camera, pinch.x, pinch.y);
+              this._holdPos.set(w.x, w.y, this.dandelion.position.z);
+            } else if (this._held) {
+              this._held = false;
+              this.ctx.interaction.enabled = true;
+            }
+ 
+            const level = this.ctx.mic.getLevel({ lowHz: 250, highHz: 2400 });
+            if (this._baselineMs < 600) {
+              this._baselineMs += dt;
+              const k = clamp(dt / 600, 0, 1);
+              this._baseline = this._baseline ? lerp(this._baseline, level, k) : level;
+              UI.touchAreaHint.textContent = `校准中… ${(this._baselineMs / 600 * 100).toFixed(0)}%`;
+            } else {
+              const threshold = Math.max(this._baseline + 0.08, this._baseline * 3.2, 0.12);
+              if (level > threshold) this._aboveMs += dt;
+              else this._aboveMs = Math.max(0, this._aboveMs - dt * 0.9);
+              const p = clamp(this._aboveMs / 1000, 0, 1);
+              UI.touchAreaHint.textContent = `吹气进度 ${(p * 100).toFixed(0)}%`;
+              if (this._aboveMs >= 1000) this._success();
+            }
             this._loop = requestAnimationFrame(loop);
           };
           this._loop = requestAnimationFrame(loop);
@@ -1553,6 +1624,8 @@
           this._done = true;
           if (this._loop) cancelAnimationFrame(this._loop);
           this._loop = null;
+          this._held = false;
+          this.ctx.interaction.enabled = true;
           await this.ctx.audio.playOneShot(AudioPaths.wind, { volume: 0.9 }).catch(() => {});
           toast('风把种子吹散了！');
           if (this.dandelion) this.dandelion.visible = false;
@@ -1572,7 +1645,8 @@
           const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 3.2, transparent: true, opacity: 0.9 });
           this.particles = new THREE.Points(geom, mat);
           this.vel = vel;
-          this.particles.position.set(0, 30, 0);
+          if (this.dandelion) this.particles.position.copy(this.dandelion.position).add(new THREE.Vector3(0, 60, 0));
+          else this.particles.position.set(0, 30, 0);
           this.scene.add(this.particles);
         }
         async unmount() {
@@ -1580,6 +1654,8 @@
           this._loop = null;
           UI.touchAreaHint.classList.add('hidden');
           this.ctx.mic.stop();
+          this.ctx.hands.stop();
+          this.ctx.interaction.enabled = true;
           await super.unmount();
         }
       }
